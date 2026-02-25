@@ -37,7 +37,7 @@ class DataIngestion:
         self.db_keyspace = os.getenv("ASTRA_DB_KEYSPACE")
 
 
-    def _get_csv_path(self):
+    def _get_csv_path(self): 
         current_dir = os.getcwd() 
         csv_path = os.path.join(current_dir, "data", "product_reviews.csv") 
 
@@ -75,7 +75,7 @@ class DataIngestion:
                     "product_id": entry["product_id"],
                     "product_title": entry["product_title"],
                     "rating": entry["rating"],
-                    "total_reviews": entry["total_reviews"],
+                    "total_reviews": entry["total_reviews"], 
                     "price": entry["price"]
             }
             doc = Document(page_content=entry["top_reviews"], metadata=metadata)
@@ -91,7 +91,7 @@ class DataIngestion:
             embedding= self.model_loader.load_embeddings(),
             collection_name=collection_name,
             api_endpoint=self.db_api_endpoint,
-            token=self.db_application_token,
+            token=self.db_application_token, 
             namespace=self.db_keyspace,
         )
 

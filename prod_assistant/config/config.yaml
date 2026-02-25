@@ -1,9 +1,9 @@
 astra_db:
-  collection_name: "ecommercedata"
+  collection_name: "ecommercedata_v2"
 
 embedding_model:
   provider: "google"
-  model_name: "models/text-embedding-004"
+  model_name: "gemini-embedding-001"
 
 retriever:
   top_k: 4
