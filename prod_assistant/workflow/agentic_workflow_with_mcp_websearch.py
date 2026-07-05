@@ -6,10 +6,10 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
-from prod_assistant.prompt_library.prompts import PROMPT_REGISTRY, PromptType
-from prod_assistant.retriever.retrieval import Retriever
-from prod_assistant.utils.model_loader import ModelLoader
-from prod_assistant.evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
+from prompt_library.prompts import PROMPT_REGISTRY, PromptType
+from retriever.retrieval import Retriever
+from utils.model_loader import ModelLoader
+from evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import asyncio
 
@@ -36,22 +36,16 @@ class AgenticRAG:
             }
         )
 
-        self.mcp_tools = [] 
-
         # Build workflow
         self.workflow = self._build_workflow()
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
         # Load MCP tools asynchronously
-        # asyncio.run(self._safe_async_init())
+        asyncio.run(self._safe_async_init())
 
     async def async_init(self):
-        try:
-            self.mcp_tools = await self.mcp_client.get_tools()
-            print("MCP tools loaded successfully.")
-        except Exception as e:
-            print(f"Warning: MCP tool loading failed: {e}")
-            self.mcp_tools = []
+        """Load MCP tools asynchronously."""
+        self.mcp_tools = await self.mcp_client.get_tools()
 
     async def _safe_async_init(self):
         """Safe async init wrapper (prevents event loop crash)."""
@@ -63,111 +57,64 @@ class AgenticRAG:
             self.mcp_tools = []
 
     # ---------- Nodes ----------
-    # def _ai_assistant(self, state: AgentState):
-    #     print("--- CALL ASSISTANT ---")
-    #     messages = state["messages"]
-    #     last_message = messages[-1].content
-
-    #     if any(word in last_message.lower() for word in ["price", "review", "product"]):
-    #         return {"messages": [HumanMessage(content="TOOL: retriever")]}
-    #     else:
-    #         prompt = ChatPromptTemplate.from_template(
-    #             "You are a helpful assistant. Answer the user directly.\n\nQuestion: {question}\nAnswer:"
-    #         )
-    #         chain = prompt | self.llm | StrOutputParser()
-    #         response = chain.invoke({"question": last_message}) or "I'm not sure about that."
-    #         return {"messages": [HumanMessage(content=response)]} 
-
     def _ai_assistant(self, state: AgentState):
         print("--- CALL ASSISTANT ---")
-        return state
-        
-    
+        messages = state["messages"]
+        last_message = messages[-1].content
+
+        if any(word in last_message.lower() for word in ["price", "review", "product"]):
+            return {"messages": [HumanMessage(content="TOOL: retriever")]}
+        else:
+            prompt = ChatPromptTemplate.from_template(
+                "You are a helpful assistant. Answer the user directly.\n\nQuestion: {question}\nAnswer:"
+            )
+            chain = prompt | self.llm | StrOutputParser()
+            response = chain.invoke({"question": last_message}) or "I'm not sure about that."
+            return {"messages": [HumanMessage(content=response)]}
+
     async def _vector_retriever(self, state: AgentState):
-        print("--- RETRIEVER (ASTRA VECTOR DB) ---")
-        
-        query = state["messages"][0].content
-        try:
-            # docs = self.retriever_obj.get_relevant_documents(query) 
-            print("User query: ", query)
-            docs = await asyncio.to_thread(
-                self.retriever_obj.get_relevant_documents,
-                query)      
-            
-            print(f"Retrieved {len(docs)} documents from Astra DB docs are : {docs}")  
-
-            for i, d in enumerate(docs):
-                print(f"Doc {i}:", d.page_content[:300])
-            
-            if not docs :   
-                return {"messages": [HumanMessage(content="NO_ASTRA_RESULTS")]}
-            
-            context = "\n\n".join([doc.page_content for doc in docs])
-            print("CONTEXT SENT TO LLM:", context)
-            return {"messages": [HumanMessage(content=context)]}
-            
-        except Exception as e:
-            
-            return {"messages": [HumanMessage(content=f"retriever Error: {e}")]}
-
-    # async def _vector_retriever(self, state: AgentState):
-    #     print("--- RETRIEVER (MCP) ---")
-    #     query = state["messages"][-1].content
-
-    #     tool = next((t for t in self.mcp_tools if t.name == "get_product_info"), None)
-    #     if tool is None:
-    #         print("Web search tool is not available")
-    #         return {"messages": [HumanMessage(content="Retriever tool not found in MCP client.")]}
-
-    #     try:
-    #         result = await tool.ainvoke({"query": query})
-    #         context = result or "No relevant product data found."
-    #     except Exception as e:
-    #         context = f"Error invoking retriever: {e}"
-
-    #     return {"messages": [HumanMessage(content=context)]}        
-
-    async def _web_search(self, state):
-        print("--- WEB SEARCH (MCP) ---")
-        
-        tool = next((t for t in self.mcp_tools if t.name == "web_search"), None)
-        if tool is None:
-            print("Web search tool is not available.")
-            return {
-                "messages": [
-                    HumanMessage(content="Web search service is currently unavailable.")
-                    ]
-                    }
+        print("--- RETRIEVER (MCP) ---")
         query = state["messages"][-1].content
-            
-        result = await tool.ainvoke({"query": query}) 
-        return {
-            "messages": [
-                HumanMessage(content=str(result if result else "NO_WEB_RESULTS"))
-                ]
-                }
+
+        tool = next((t for t in self.mcp_tools if t.name == "get_product_info"), None)
+        if not tool:
+            return {"messages": [HumanMessage(content="Retriever tool not found in MCP client.")]}
+
+        try:
+            result = await tool.ainvoke({"query": query})
+            context = result or "No relevant product data found."
+        except Exception as e:
+            context = f"Error invoking retriever: {e}"
+
+        return {"messages": [HumanMessage(content=context)]}
+
+    async def _web_search(self, state: AgentState):
+        print("--- WEB SEARCH (MCP) ---")
+        query = state["messages"][-1].content
+        tool = next(t for t in self.mcp_tools if t.name == "web_search")
+        result = await tool.ainvoke({"query": query})  # ✅
+        context = result if result else "No data from web"
+        return {"messages": [HumanMessage(content=context)]}
 
 
-    # def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
-    #     print("--- GRADER ---")
-    #     question = state["messages"][0].content
-    #     docs = state["messages"][-1].content
+    def _grade_documents(self, state: AgentState) -> Literal["generator", "rewriter"]:
+        print("--- GRADER ---")
+        question = state["messages"][0].content
+        docs = state["messages"][-1].content
 
-    #     prompt = PromptTemplate(
-    #         template="""You are a grader. Question: {question}\nDocs: {docs}\n
-    #         Are docs relevant to the question? Answer yes or no.""",
-    #         input_variables=["question", "docs"],
-    #     )
-    #     chain = prompt | self.llm | StrOutputParser()
-    #     score = chain.invoke({"question": question, "docs": docs}) or ""
-    #     return "generator" if "yes" in score.lower() else "rewriter"
+        prompt = PromptTemplate(
+            template="""You are a grader. Question: {question}\nDocs: {docs}\n
+            Are docs relevant to the question? Answer yes or no.""",
+            input_variables=["question", "docs"],
+        )
+        chain = prompt | self.llm | StrOutputParser()
+        score = chain.invoke({"question": question, "docs": docs}) or ""
+        return "generator" if "yes" in score.lower() else "rewriter"
 
     def _generate(self, state: AgentState):
         print("--- GENERATE ---")
-        question = state["messages"][0].content 
-        print("Question :", question)
+        question = state["messages"][0].content
         docs = state["messages"][-1].content
-        print("DOCS Passed to LLM:", docs[:500])
 
         prompt = ChatPromptTemplate.from_template(
             PROMPT_REGISTRY[PromptType.PRODUCT_BOT].template
@@ -208,51 +155,30 @@ class AgenticRAG:
         workflow.add_node("WebSearch", self._web_search)
 
         # Workflow edges
-        # workflow.add_edge(START, "Assistant")
-        workflow.add_edge(START,"Retriever")
+        workflow.add_edge(START, "Assistant")
         workflow.add_conditional_edges(
             "Assistant",
             lambda state: "Retriever" if "TOOL" in state["messages"][-1].content else END,
             {"Retriever": "Retriever", END: END},
         )
-
         workflow.add_conditional_edges(
             "Retriever",
-            lambda state: "WebSearch" if "NO_ASTRA_RESULTS" in state["messages"][-1].content else "Generator",
-            {
-                "Generator": "Generator",
-                "WebSearch": "WebSearch"
-                },
-                )
-
-        # workflow.add_conditional_edges(
-        #     "Retriever",
-        #     self._grade_documents,
-        #     {"generator": "Generator", "rewriter": "Rewriter"},
-        # )
-        
-        # workflow.add_edge("Rewriter", "WebSearch")
-        workflow.add_edge("WebSearch", "Generator")
+            self._grade_documents,
+            {"generator": "Generator", "rewriter": "Rewriter"},
+        )
         workflow.add_edge("Generator", END)
+        workflow.add_edge("Rewriter", "WebSearch")
+        workflow.add_edge("WebSearch", "Generator")
 
         return workflow
 
     # ---------- Public Run ----------
-    # async def run(self, query: str, thread_id: str = "default_thread") -> str:
-    #     """Run the workflow for a given query and return the final answer."""
-    #     result = await self.app.ainvoke(
-    #         {"messages": [HumanMessage(content=query)]},
-    #         config={"configurable": {"thread_id": thread_id}}
-    #     )
-    #     return result["messages"][-1].content
-
     async def run(self, query: str, thread_id: str = "default_thread") -> str:
-        if not self.mcp_tools:
-            await self.async_init()
+        """Run the workflow for a given query and return the final answer."""
         result = await self.app.ainvoke(
             {"messages": [HumanMessage(content=query)]},
             config={"configurable": {"thread_id": thread_id}}
-            )
+        )
         return result["messages"][-1].content
 
 # ---------- Standalone Test ----------
