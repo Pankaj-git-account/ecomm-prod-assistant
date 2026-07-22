@@ -33,12 +33,16 @@ def format_docs(docs) -> str:
 def build_chain(query):
     """Build the RAG pipeline chain with retriever, prompt, LLM, and parser."""
     retriever = retriever_obj.load_retriever()
-    retrieved_docs=retriever.invoke(query)
-    
-    #retrieved_contexts = [format_docs(doc) for doc in retrieved_docs]
-    
+    if retriever is None:
+        return None, ["Product retrieval is currently unavailable because the vector store is misconfigured. Please try again later."]
+
+    try:
+        retrieved_docs = retriever.invoke(query)
+    except Exception as exc:
+        return None, [f"Product retrieval is currently unavailable: {exc}"]
+
     retrieved_contexts = [format_docs(retrieved_docs)]
-    
+
     llm = model_loader.load_llm()
     prompt = ChatPromptTemplate.from_template(
         PROMPT_REGISTRY[PromptType.PRODUCT_BOT].template
@@ -51,24 +55,27 @@ def build_chain(query):
         | StrOutputParser()
     )
 
-
-    return chain,retrieved_contexts 
+    return chain, retrieved_contexts
 
 
 def invoke_chain(query: str, debug: bool = False):
     """Run the chain with a user query."""
-    chain,retrieved_contexts = build_chain(query)
+    chain, retrieved_contexts = build_chain(query)
+
+    if chain is None:
+        return retrieved_contexts, retrieved_contexts[0]
 
     if debug:
-        # For debugging: show docs retrieved before passing to LLM
-        docs = retriever_obj.load_retriever().invoke(query)
-        print("\nRetrieved Documents:")
-        print(format_docs(docs))
-        print("\n---\n")
+        retriever = retriever_obj.load_retriever()
+        if retriever is not None:
+            docs = retriever.invoke(query)
+            print("\nRetrieved Documents:")
+            print(format_docs(docs))
+            print("\n---\n")
 
     response = chain.invoke(query)
-    
-    return retrieved_contexts,response
+
+    return retrieved_contexts, response
 
 
 # if __name__=='__main__':

@@ -1,15 +1,30 @@
 import asyncio
 from prod_assistant.utils.model_loader import ModelLoader
-from ragas import SingleTurnSample
-from ragas.llms import LangchainLLMWrapper
-from ragas.embeddings import LangchainEmbeddingsWrapper
-from ragas.metrics import LLMContextPrecisionWithoutReference, ResponseRelevancy
-import grpc.experimental.aio as grpc_aio
-grpc_aio.init_grpc_aio()
-model_loader=ModelLoader()
+
+try:
+    import grpc.experimental.aio as grpc_aio
+    grpc_aio.init_grpc_aio()
+except Exception:
+    grpc_aio = None
+
+try:
+    from ragas import SingleTurnSample
+    from ragas.llms import LangchainLLMWrapper
+    from ragas.embeddings import LangchainEmbeddingsWrapper
+    from ragas.metrics import LLMContextPrecisionWithoutReference, ResponseRelevancy
+except Exception:
+    SingleTurnSample = None
+    LangchainLLMWrapper = None
+    LangchainEmbeddingsWrapper = None
+    LLMContextPrecisionWithoutReference = None
+    ResponseRelevancy = None
+
+model_loader = ModelLoader()
 
 
 def evaluate_context_precision(query, response, retrieved_context):
+    if SingleTurnSample is None or LangchainLLMWrapper is None or LLMContextPrecisionWithoutReference is None:
+        return "Ragas evaluation is unavailable because the required dependencies are not installed."
     try:
         sample = SingleTurnSample(
             user_input=query,
@@ -29,6 +44,8 @@ def evaluate_context_precision(query, response, retrieved_context):
         return e
 
 def evaluate_response_relevancy(query, response, retrieved_context):
+    if SingleTurnSample is None or LangchainLLMWrapper is None or LangchainEmbeddingsWrapper is None or ResponseRelevancy is None:
+        return "Ragas evaluation is unavailable because the required dependencies are not installed."
     try:
         sample = SingleTurnSample(
             user_input=query,

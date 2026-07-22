@@ -6,10 +6,10 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.graph.message import add_messages
 from langgraph.checkpoint.memory import MemorySaver
 
-from prompt_library.prompts import PROMPT_REGISTRY, PromptType
-from retriever.retrieval import Retriever
-from utils.model_loader import ModelLoader
-from evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
+from prod_assistant.prompt_library.prompts import PROMPT_REGISTRY, PromptType
+from prod_assistant.retriever.retrieval import Retriever
+from prod_assistant.utils.model_loader import ModelLoader
+from prod_assistant.evaluation.ragas_eval import evaluate_context_precision, evaluate_response_relevancy
 from langchain_mcp_adapters.client import MultiServerMCPClient
 import asyncio
 
@@ -40,8 +40,10 @@ class AgenticRAG:
         self.workflow = self._build_workflow()
         self.app = self.workflow.compile(checkpointer=self.checkpointer)
 
-        # Load MCP tools asynchronously
-        asyncio.run(self._safe_async_init())
+        # MCP tools are loaded lazily on first run() — awaiting inside the
+        # already-running event loop instead of asyncio.run(), which crashes
+        # when called from an async context (e.g. a FastAPI endpoint).
+        self.mcp_tools = None
 
     async def async_init(self):
         """Load MCP tools asynchronously."""
@@ -175,6 +177,8 @@ class AgenticRAG:
     # ---------- Public Run ----------
     async def run(self, query: str, thread_id: str = "default_thread") -> str:
         """Run the workflow for a given query and return the final answer."""
+        if self.mcp_tools is None:
+            await self._safe_async_init()
         result = await self.app.ainvoke(
             {"messages": [HumanMessage(content=query)]},
             config={"configurable": {"thread_id": thread_id}}
@@ -184,5 +188,5 @@ class AgenticRAG:
 # ---------- Standalone Test ----------
 if __name__ == "__main__":
     rag_agent = AgenticRAG()
-    answer = rag_agent.run("What is the price of iPhone 16?")
+    answer = asyncio.run(rag_agent.run("What is the price of iPhone 16?"))
     print("\nFinal Answer:\n", answer)
